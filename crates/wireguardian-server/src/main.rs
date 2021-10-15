@@ -12,9 +12,6 @@ pub mod cli;
 pub mod config;
 pub mod device;
 pub mod models {
-    mod dhcp;
-    pub use dhcp::Dhcp;
-
     mod user;
     pub use user::User;
 
@@ -29,8 +26,8 @@ pub mod models {
 }
 pub mod otp;
 pub mod services {
-    mod dhcp;
-    pub use dhcp::DhcpService;
+    mod session;
+    pub use session::SessionService;
 
     mod wireguardian;
     pub use wireguardian::WireguardianService;
@@ -99,12 +96,12 @@ async fn main() -> eyre::Result<()> {
             // 1. start wireguard device based on args
             let _wg = device::create(cfg.device)?;
 
-            // 2. start dhcp & wireguardian grpc service
-            tracing::info!(?cfg.dhcp, "starting dhcp service");
-            let dhcp_svc = services::DhcpService::new(db.clone(), cfg.dhcp).await?;
+            // 2. start session & wireguardian grpc service
+            tracing::info!(?cfg.dhcp, "starting session service");
+            let session_svc = services::SessionService::new(db, cfg.dhcp).await?;
 
             tracing::info!(?cfg.rpc.listen, "starting wireguardian service");
-            let svc = services::WireguardianService::server(db, dhcp_svc);
+            let svc = services::WireguardianService::server(session_svc);
 
             // 3. wait for shutdown or ctrl-c signal
             tokio::select! {

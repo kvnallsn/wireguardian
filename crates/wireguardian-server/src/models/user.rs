@@ -3,12 +3,27 @@
 use crate::models::TotpParams;
 use color_eyre::eyre;
 use sqlx::sqlite::SqlitePool;
+use std::convert::TryInto;
 use uuid::Uuid;
+
+macro_rules! parse_user_row {
+    ($row:expr) => {{
+        let id: [u8; 16] = $row
+            .id
+            .try_into()
+            .map_err(|_| eyre::eyre!("uuid must be 16 bytes"))?;
+        User {
+            id: Uuid::from_bytes(id),
+            username: $row.username,
+            email: $row.email,
+        }
+    }};
+}
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct User {
     /// Universally Unique Identifier (UUID)
-    id: String,
+    id: Uuid,
 
     /// Unique username belonging to this user
     pub username: String,
@@ -33,9 +48,8 @@ impl User {
         password: String,
         totp_params: TotpParams,
     ) -> eyre::Result<Self> {
-        let id = Uuid::new_v4().to_hyphenated().to_string();
         let user = User {
-            id,
+            id: Uuid::new_v4(),
             username,
             email,
         };
@@ -72,20 +86,19 @@ impl User {
     /// If the backend isn't initialize
     /// If the email doesn't have a corresponding user
     pub async fn fetch_by_email(db: &SqlitePool, email: &str) -> eyre::Result<Self> {
-        let user = sqlx::query_as!(
-            User,
+        let row = sqlx::query!(
             "SELECT id, username, email FROM users WHERE email = ?",
             email
         )
         .fetch_one(db)
         .await?;
 
-        Ok(user)
+        Ok(parse_user_row!(row))
     }
 
     /// Returns the unique identifier representing this user
-    pub fn id(&self) -> &str {
-        self.id.as_str()
+    pub fn id(&self) -> Uuid {
+        self.id
     }
 
     /// Attempts to fetch a user from the backend with the specified email address and validate the

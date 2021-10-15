@@ -1,10 +1,6 @@
 //! Wireguardian Server (Daemon)
 
-use crate::{
-    models::{Session, User},
-    services::DhcpService,
-};
-use sqlx::sqlite::SqlitePool;
+use crate::services::SessionService;
 use tonic::{Request, Response, Status};
 use wireguardian_proto::{
     wireguardian_server::{Wireguardian, WireguardianServer},
@@ -14,8 +10,7 @@ use wireguardian_proto::{
 
 // TODO #3: Implement config file for wg device (to avoid requiring already created device)
 pub struct WireguardianService {
-    db: SqlitePool,
-    dhcp: DhcpService,
+    sessions: SessionService,
 }
 
 impl WireguardianService {
@@ -23,23 +18,9 @@ impl WireguardianService {
     /// database
     ///
     /// # Arguments
-    /// * `db` - Sqlite Database used for auth/etc
-    /// * `dhcp` - A dhcp service to issue IPv4 addresses when clients connect
-    pub fn server(db: SqlitePool, dhcp: DhcpService) -> WireguardianServer<WireguardianService> {
-        WireguardianServer::new(WireguardianService { db, dhcp })
-    }
-
-    /// Attempts to retrieve a session, returning an error if the session isn't found
-    ///
-    /// # Arguments
-    /// * `token` - Unique identifier of session to fetch
-    async fn get_session(&self, token: &str) -> Result<Session, Status> {
-        let session = Session::fetch(&self.db, token).await.map_err(|error| {
-            tracing::error!(?error, "failed to fetch session");
-            Status::unauthenticated("user not logged in")
-        })?;
-
-        Ok(session)
+    /// * `sessions` - A session service to track user sessions
+    pub fn server(sessions: SessionService) -> WireguardianServer<WireguardianService> {
+        WireguardianServer::new(WireguardianService { sessions })
     }
 }
 
@@ -48,24 +29,19 @@ impl Wireguardian for WireguardianService {
     async fn login(&self, request: Request<LoginRequest>) -> Result<Response<LoginReply>, Status> {
         let request = request.into_inner();
 
-        // 1. attempt to fetch and validate user credentials and totp
-        let user =
-            User::fetch_and_validate(&self.db, &request.email, &request.password, request.totp)
-                .await
-                .map_err(|error| {
-                    tracing::error!(?error, "user failed to validate");
-                    Status::unauthenticated("email or password incorrect")
-                })?;
+        // 1. validate user and create session (if successful)
+        let session = self
+            .sessions
+            .login(&request.email, &request.password, request.totp)
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "user failed to validate");
+                Status::unauthenticated("email or password incorrect")
+            })?;
 
-        // 2. create a session for the user
-        let session = Session::create(&self.db, &user).await.map_err(|error| {
-            tracing::error!(?error, "failed to create session");
-            Status::unauthenticated("failed to create session")
-        })?;
-
-        // 3. send session id back to user
+        // 2. send session id back to user
         let reply = LoginReply {
-            token: session.id().to_owned(),
+            token: session.id().to_hyphenated().to_string(),
         };
 
         Ok(Response::new(reply))
@@ -77,14 +53,15 @@ impl Wireguardian for WireguardianService {
     ) -> Result<Response<LogoutReply>, Status> {
         let request = request.into_inner();
 
-        // 1. fetch session (validates token)
-        let session = self.get_session(&request.token).await?;
+        self.sessions
+            .logout(&request.token)
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "failed to expire session");
 
-        // 2. expire the session
-        session.expire(&self.db).await.map_err(|error| {
-            tracing::error!(?error, "failed to expire session");
-            Status::unauthenticated("user not logged out")
-        })?;
+                // TODO change error type
+                Status::unauthenticated("user not logged out")
+            })?;
 
         let reply = LogoutReply { success: true };
         Ok(Response::new(reply))
@@ -97,12 +74,9 @@ impl Wireguardian for WireguardianService {
         let request = request.into_inner();
 
         // 1. fetch session (validates token)
-        let session = self.get_session(&request.token).await?;
-
-        // 2. generate ip address (fake dhcp)
-        let lease = self.dhcp.lease(&session).await.map_err(|error| {
-            tracing::error!(?error);
-            Status::resource_exhausted("no dhcp ips availabled")
+        let session = self.sessions.get(&request.token).await.map_err(|error| {
+            tracing::error!(?error, "session not found");
+            Status::unauthenticated("user not logged in")
         })?;
 
         // 3. add peer information to wireguard endpoint
@@ -110,7 +84,7 @@ impl Wireguardian for WireguardianService {
 
         // 4. build response
         let reply = ConnectReply {
-            ip: lease.to_string(),
+            ip: session.ip().to_string(),
             pubkey: "tbd".into(),
             endpoint: "".into(),
             allowed: "".into(),
@@ -126,18 +100,15 @@ impl Wireguardian for WireguardianService {
         let request = request.into_inner();
 
         // 1. fetch session (validates token)
-        let session = self.get_session(&request.token).await?;
-
-        // 2. release the ip
-        self.dhcp.release(&session).await.map_err(|error| {
+        let _session = self.sessions.get(&request.token).await.map_err(|error| {
             tracing::error!(?error);
-            Status::invalid_argument("bad request")
+            Status::unauthenticated("user not logged out")
         })?;
 
-        // 3. remove peer from wireguard endpoint
+        // 2. remove peer from wireguard endpoint
         // TODO
 
-        // 4. build response
+        // 3. build response
         let reply = DisconnectReply { success: true };
 
         Ok(Response::new(reply))

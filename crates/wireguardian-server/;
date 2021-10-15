@@ -2,25 +2,21 @@
 
 use crate::models::User;
 use chrono::NaiveDateTime;
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use sqlx::sqlite::SqlitePool;
 use std::{convert::TryInto, net::Ipv4Addr};
 use uuid::Uuid;
 
 macro_rules! parse_session_row {
     ($row:expr) => {{
-        let id: [u8; 16] = $row
-            .id
-            .try_into()
-            .map_err(|_| eyre::eyre!("uuid must be 16 bytes"))?;
-        let user_id: [u8; 16] = $row
-            .user_id
-            .try_into()
-            .map_err(|_| eyre::eyre!("uuid must be 16 bytes"))?;
+        let id: [u8; 16] = $row.id.try_into()?;
         let ip: u32 = $row.ip.try_into()?;
         Session {
             id: Uuid::from_bytes(id),
-            user_id: Uuid::from_bytes(user_id),
+            user_id: $row
+                .user_id
+                .parse()
+                .wrap_err("failed to parse user id uuid")?,
             ip: Ipv4Addr::from(ip),
             expired: $row.expired,
             created: $row.created,
@@ -99,24 +95,6 @@ impl Session {
         } else {
             Ok(session)
         }
-    }
-
-    /// Fetches all active, non-expired sessions from the database
-    ///
-    /// # Arguments
-    /// * `db` - Connection to the backend session storage service
-    pub async fn fetch_all(db: &SqlitePool) -> eyre::Result<Vec<Self>> {
-        let rows = sqlx::query!(
-            "SELECT id, user_id, ip, expired, created, modified FROM sessions WHERE expired = false"
-        )
-        .fetch_all(db)
-        .await?;
-
-        let mut sessions = Vec::new();
-        for row in rows {
-            sessions.push(parse_session_row!(row));
-        }
-        Ok(sessions)
     }
 
     /// Marks this session as expired in the backend

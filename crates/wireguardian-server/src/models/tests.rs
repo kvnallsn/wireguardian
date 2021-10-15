@@ -1,9 +1,8 @@
 //! Integration Tests
 
-use crate::models::{Dhcp, Session, User};
+use crate::models::{Session, User};
 use color_eyre::eyre;
 use std::time::Duration;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn single_user_flow_1() -> eyre::Result<()> {
@@ -30,20 +29,8 @@ async fn single_user_flow_1() -> eyre::Result<()> {
     );
 
     // attempt to create a session
-    let session = Session::create(&db, &r).await?;
+    let session = Session::create(&db, &r, [192, 168, 0, 100].into()).await?;
     assert!(!session.is_expired(), "sessions should not start expired");
-
-    // acquire a dhcp lease for the session
-    let lease_id = Uuid::new_v4();
-    let lease = Dhcp::create(&db, lease_id, &session, [192, 168, 0, 100].into()).await?;
-    assert!(lease.is_active(), "lease should be active when created");
-
-    // wait one seconds then expire the lease
-    lease.release(&db).await?;
-
-    // fetch lesae to make sure it's now released
-    let lease = Dhcp::fetch(&db, lease_id).await?;
-    assert!(!lease.is_active(), "lease should be marked as released");
 
     // wait one seconds then expire the session
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -73,8 +60,8 @@ async fn two_user_flow_1() -> eyre::Result<()> {
     .await?;
 
     // attempt to create a sessions
-    let session_u0 = Session::create(&db, &user0).await?;
-    let session_u1 = Session::create(&db, &user1).await?;
+    let session_u0 = Session::create(&db, &user0, [192, 168, 0, 100].into()).await?;
+    let session_u1 = Session::create(&db, &user1, [192, 168, 0, 101].into()).await?;
 
     assert!(
         !session_u0.is_expired(),
@@ -85,19 +72,6 @@ async fn two_user_flow_1() -> eyre::Result<()> {
         !session_u1.is_expired(),
         "sessions should not start expired"
     );
-
-    // acquire a dhcp lease for the session
-    let lease_id_u0 = Uuid::new_v4();
-    let lease_u0 = Dhcp::create(&db, lease_id_u0, &session_u0, [192, 168, 0, 100].into()).await?;
-
-    let lease_id_u1 = Uuid::new_v4();
-    let lease_u1 = Dhcp::create(&db, lease_id_u1, &session_u1, [192, 168, 0, 101].into()).await?;
-
-    assert!(lease_u0.is_active(), "leases should be active when created");
-    assert!(lease_u1.is_active(), "leases should be active when created");
-
-    lease_u0.release(&db).await?;
-    lease_u1.release(&db).await?;
 
     // wait one seconds then expire the session
     tokio::time::sleep(Duration::from_secs(1)).await;
