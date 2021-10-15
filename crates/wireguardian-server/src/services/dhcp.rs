@@ -56,15 +56,26 @@ impl DhcpService {
         // 1. generate a new lease id
         let id = Uuid::new_v4();
 
+        // 2. check is session already has a lease
+        let session_lease_count = Dhcp::fetch_by_session_id(&self.1, session.id().parse()?)
+            .await?
+            .into_iter()
+            .filter(|lease| lease.is_active())
+            .count();
+
+        if session_lease_count > 0 {
+            eyre::bail!("session already has a lease");
+        }
+
         let ip = {
             // Note: this exists in a smaller scope to avoid potentially sending the RwLock
             // (available) across threads (which the compilier will complain about).  When this
             // scope ends, the lock is dropped and the db update can continue asynchronously
 
-            // 2. lock in-memory db to avoid race conditions
+            // 3. lock in-memory db to avoid race conditions
             let mut available = self.0.write();
 
-            // 3. find an available ip address
+            // 4. find an available ip address
             let ip = match available
                 .iter()
                 .filter_map(|(&ip, &leased)| if leased.is_none() { Some(ip) } else { None })
@@ -77,14 +88,14 @@ impl DhcpService {
                 }
             };
 
-            // 4. mark ip as leased
+            // 5. mark ip as leased
             available.insert(ip, Some(id));
 
-            // 5. return the newly leased IP
+            // 6. return the newly leased IP
             ip
         };
 
-        // 5. persist this lease in the db
+        // 7. persist this lease in the db
         Dhcp::create(&self.1, id, session, ip.into()).await?;
 
         Ok(ip.into())
@@ -117,6 +128,164 @@ impl DhcpService {
             // 4. mark as released in db
             lease.release(&self.1).await?;
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::DhcpConfig,
+        models::{Session, User},
+    };
+    use color_eyre::eyre;
+    use sqlx::sqlite::SqlitePool;
+    use std::time::Duration;
+
+    async fn create_dhcp_service(db: SqlitePool) -> eyre::Result<DhcpService> {
+        Ok(DhcpService::new(
+            db,
+            DhcpConfig {
+                start: [192, 168, 0, 100].into(),
+                end: [192, 168, 0, 105].into(),
+            },
+        )
+        .await?)
+    }
+
+    #[tokio::test]
+    async fn single_user() -> eyre::Result<()> {
+        let (db, users) = crate::tests::setup().await?;
+        let dhcp = create_dhcp_service(db.clone()).await?;
+
+        // 1. login user and create session
+        let user = User::fetch_and_validate(
+            &db,
+            &users[0].email,
+            &users[0].password,
+            users[0].totp.code()?,
+        )
+        .await?;
+        let session = Session::create(&db, &user).await?;
+
+        // 2. ask for dhcp lease
+        let _ip = dhcp.lease(&session).await?;
+
+        // 3. sleep for 1 second
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // 4. release dhcp lease
+        dhcp.release(&session).await?;
+
+        // 5. close session
+        session.expire(&db).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_user_multi_lease() -> eyre::Result<()> {
+        let (db, users) = crate::tests::setup().await?;
+        let dhcp = create_dhcp_service(db.clone()).await?;
+
+        // 1. login user and create session
+        let user = User::fetch_and_validate(
+            &db,
+            &users[0].email,
+            &users[0].password,
+            users[0].totp.code()?,
+        )
+        .await?;
+        let session = Session::create(&db, &user).await?;
+
+        // 2. ask for dhcp leases in succession
+        let _ip = dhcp.lease(&session).await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        dhcp.release(&session).await?;
+
+        let _ip = dhcp.lease(&session).await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        dhcp.release(&session).await?;
+
+        // 3. close session
+        session.expire(&db).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_user_too_many_concurrent_leases() -> eyre::Result<()> {
+        let (db, users) = crate::tests::setup().await?;
+        let dhcp = create_dhcp_service(db.clone()).await?;
+
+        // 1. login user and create session
+        let user = User::fetch_and_validate(
+            &db,
+            &users[0].email,
+            &users[0].password,
+            users[0].totp.code()?,
+        )
+        .await?;
+        let session = Session::create(&db, &user).await?;
+
+        // 2. ask for dhcp lease
+        let _ip = dhcp.lease(&session).await?;
+        let r = dhcp.lease(&session).await;
+        assert!(
+            r.is_err(),
+            "acquired two dhcp leases in one session, should only get one"
+        );
+
+        // 3. sleep for 1 second
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // 4. release dhcp lease
+        dhcp.release(&session).await?;
+
+        // 5. close session
+        session.expire(&db).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multi_user() -> eyre::Result<()> {
+        let (db, users) = crate::tests::setup().await?;
+        let dhcp = create_dhcp_service(db.clone()).await?;
+
+        // 1. login user and create session
+        let user0 = User::fetch_and_validate(
+            &db,
+            &users[0].email,
+            &users[0].password,
+            users[0].totp.code()?,
+        )
+        .await?;
+        let mut u0_session = Session::create(&db, &user0).await?;
+
+        let user1 = User::fetch_and_validate(
+            &db,
+            &users[1].email,
+            &users[1].password,
+            users[1].totp.code()?,
+        )
+        .await?;
+        let mut u1_session = Session::create(&db, &user1).await?;
+
+        // 2. ask for dhcp lease
+        let u0_ip = dhcp.lease(&u0_session).await?;
+        let u1_ip = dhcp.lease(&u1_session).await?;
+        assert!(u0_ip != u1_ip, "user ip's should not match");
+
+        // 3. release dhcp lease
+        dhcp.release(&u0_session).await?;
+        dhcp.release(&u1_session).await?;
+
+        // 4. close session
+        u0_session.expire(&db).await?;
+        u1_session.expire(&db).await?;
 
         Ok(())
     }

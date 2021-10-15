@@ -30,7 +30,7 @@ async fn single_user_flow_1() -> eyre::Result<()> {
     );
 
     // attempt to create a session
-    let mut session = Session::create(&db, &r).await?;
+    let session = Session::create(&db, &r).await?;
     assert!(!session.is_expired(), "sessions should not start expired");
 
     // acquire a dhcp lease for the session
@@ -48,10 +48,6 @@ async fn single_user_flow_1() -> eyre::Result<()> {
     // wait one seconds then expire the session
     tokio::time::sleep(Duration::from_secs(1)).await;
     session.expire(&db).await?;
-    assert!(
-        session.is_expired(),
-        "session not expired when it should be"
-    );
 
     Ok(())
 }
@@ -77,8 +73,8 @@ async fn two_user_flow_1() -> eyre::Result<()> {
     .await?;
 
     // attempt to create a sessions
-    let mut session_u0 = Session::create(&db, &user0).await?;
-    let mut session_u1 = Session::create(&db, &user1).await?;
+    let session_u0 = Session::create(&db, &user0).await?;
+    let session_u1 = Session::create(&db, &user1).await?;
 
     assert!(
         !session_u0.is_expired(),
@@ -105,8 +101,6 @@ async fn two_user_flow_1() -> eyre::Result<()> {
 
     // wait one seconds then expire the session
     tokio::time::sleep(Duration::from_secs(1)).await;
-    session_u0.expire(&db).await?;
-    session_u1.expire(&db).await?;
 
     Ok(())
 }

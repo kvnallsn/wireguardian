@@ -1,7 +1,7 @@
 //! Sessions Database Model
 
 use crate::models::User;
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use color_eyre::eyre;
 use sqlx::sqlite::SqlitePool;
 use uuid::Uuid;
@@ -80,9 +80,7 @@ impl Session {
     ///
     /// # Errors
     /// * If the backend session store conenction fails
-    pub async fn expire(&mut self, db: &SqlitePool) -> eyre::Result<()> {
-        self.expired = true;
-        self.modified = Utc::now().naive_utc();
+    pub async fn expire(self, db: &SqlitePool) -> eyre::Result<()> {
         sqlx::query!("UPDATE sessions SET expired = true WHERE id = ?", self.id)
             .execute(db)
             .await?;

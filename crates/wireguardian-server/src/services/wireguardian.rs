@@ -78,7 +78,7 @@ impl Wireguardian for WireguardianService {
         let request = request.into_inner();
 
         // 1. fetch session (validates token)
-        let mut session = self.get_session(&request.token).await?;
+        let session = self.get_session(&request.token).await?;
 
         // 2. expire the session
         session.expire(&self.db).await.map_err(|error| {
