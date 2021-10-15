@@ -1,0 +1,71 @@
+syntax = "proto3";
+package wireguardian;
+
+service Wireguardian {
+  rpc Login (LoginRequest) returns (LoginReply);
+  rpc Logout (LogoutRequest) returns (LogoutReply);
+
+  rpc ConnectVpn (ConnectRequest) returns (ConnectReply);
+  rpc DisconnectVpn (DisconnectRequest) returns (DisconnectReply);
+}
+
+message LoginRequest {
+  // remote user's email address
+  string email = 1;
+
+  // remote user's password
+  string password = 2;
+
+  // two-factor authentication code
+  uint32 totp = 3;
+}
+
+message LoginReply {
+  // opaque token used to identify a logged in session for a user
+  string token = 1;
+}
+
+message LogoutRequest {
+  // user's auth token
+  string token = 1;
+}
+
+message LogoutReply {
+  // if the logout was successful
+  bool success = 1;
+}
+
+message ConnectRequest {
+  // user's auth token
+  string token = 1;
+
+  // public key for user
+  string pubkey = 2;
+}
+
+message ConnectReply {
+  // ip address to use
+  string ip = 1;
+
+  // server's public key
+  string pubkey = 2;
+
+  // endpoint ip/port combination
+  string endpoint = 3;
+
+  // list of allowed ips to route over traffic
+  string allowed = 4;
+}
+
+message DisconnectRequest {
+  // user's auth token
+  string token = 1;
+
+  // public key for user
+  string pubkey = 2;
+}
+
+message DisconnectReply {
+  // will always be true (otherwise an error is returned)
+  bool success = 1;
+}
