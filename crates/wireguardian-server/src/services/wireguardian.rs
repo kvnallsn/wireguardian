@@ -1,15 +1,29 @@
 //! Wireguardian Server (Daemon)
 
 use crate::services::SessionService;
+use color_eyre::eyre;
+use std::convert::TryInto;
 use tonic::{Request, Response, Status};
+use wireguard_rs::{
+    configuration::{Configuration, WireGuardConfig},
+    plt,
+};
 use wireguardian_proto::{
     wireguardian_server::{Wireguardian, WireguardianServer},
     ConnectReply, ConnectRequest, DisconnectReply, DisconnectRequest, LoginReply, LoginRequest,
     LogoutReply, LogoutRequest,
 };
+use x25519_dalek::PublicKey;
 
 // TODO #3: Implement config file for wg device (to avoid requiring already created device)
 pub struct WireguardianService {
+    /// WireGuard device controlled by this service
+    device: WireGuardConfig<plt::Tun, plt::UDP>,
+
+    /// Base64-encoded public key assigned to device
+    public_key: String,
+
+    /// Sessions store for users/groups/auth
     sessions: SessionService,
 }
 
@@ -18,9 +32,26 @@ impl WireguardianService {
     /// database
     ///
     /// # Arguments
+    /// * `device` - WireGuard device controlled by this service
     /// * `sessions` - A session service to track user sessions
-    pub fn server(sessions: SessionService) -> WireguardianServer<WireguardianService> {
-        WireguardianServer::new(WireguardianService { sessions })
+    pub fn server(
+        device: WireGuardConfig<plt::Tun, plt::UDP>,
+        sessions: SessionService,
+    ) -> eyre::Result<WireguardianServer<WireguardianService>> {
+        // extract the public key from the wireguard device
+        let public_key = match device
+            .get_private_key()
+            .map(|key| base64::encode(x25519_dalek::PublicKey::from(&key).to_bytes()))
+        {
+            Some(key) => key,
+            None => eyre::bail!("private key not set"),
+        };
+
+        Ok(WireguardianServer::new(WireguardianService {
+            device,
+            public_key,
+            sessions,
+        }))
     }
 }
 
@@ -80,13 +111,24 @@ impl Wireguardian for WireguardianService {
         })?;
 
         // 3. add peer information to wireguard endpoint
-        // TODO
+        let client_pubkey: Vec<u8> = base64::decode(request.pubkey).unwrap();
+        let client_pubkey: [u8; 32] = client_pubkey.try_into().unwrap();
+        let client_pubkey: PublicKey = client_pubkey.into();
+        let client_ip = session.ip();
+
+        if !self.device.add_peer(&client_pubkey) {
+            // TODO handle error
+            // key already added
+        }
+
+        self.device
+            .add_allowed_ip(&client_pubkey, client_ip.into(), 32);
 
         // 4. build response
         let reply = ConnectReply {
             ip: session.ip().to_string(),
-            pubkey: "tbd".into(),
-            endpoint: "".into(),
+            pubkey: self.public_key.clone(),
+            endpoint: "127.0.0.1:5555".into(),
             allowed: "".into(),
         };
 
@@ -106,7 +148,11 @@ impl Wireguardian for WireguardianService {
         })?;
 
         // 2. remove peer from wireguard endpoint
-        // TODO
+        let client_pubkey: Vec<u8> = base64::decode(request.pubkey).unwrap();
+        let client_pubkey: [u8; 32] = client_pubkey.try_into().unwrap();
+        let client_pubkey: PublicKey = client_pubkey.into();
+
+        self.device.remove_peer(&client_pubkey);
 
         // 3. build response
         let reply = DisconnectReply { success: true };

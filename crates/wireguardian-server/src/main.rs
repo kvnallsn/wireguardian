@@ -94,14 +94,14 @@ async fn main() -> eyre::Result<()> {
             let cfg = config::WireguardianConfig::load(config)?;
 
             // 1. start wireguard device based on args
-            let _wg = device::create(cfg.device)?;
+            let wg = device::create(cfg.device)?;
 
             // 2. start session & wireguardian grpc service
             tracing::info!(?cfg.dhcp, "starting session service");
             let session_svc = services::SessionService::new(db, cfg.dhcp).await?;
 
             tracing::info!(?cfg.rpc.listen, "starting wireguardian service");
-            let svc = services::WireguardianService::server(session_svc);
+            let svc = services::WireguardianService::server(wg, session_svc)?;
 
             // 3. wait for shutdown or ctrl-c signal
             tokio::select! {
