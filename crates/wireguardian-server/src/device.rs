@@ -1,5 +1,10 @@
 //! Runs the wireguard device
 
+#[cfg_attr(target_os = "linux", path = "os/linux.rs")]
+#[cfg_attr(target_os = "windows", path = "os/windows.rs")]
+#[cfg_attr(target_os = "macos", path = "os/osx.rs")]
+mod os;
+
 use crate::config::DeviceConfig;
 use color_eyre::eyre;
 use std::thread;
@@ -11,6 +16,7 @@ use wireguard_rs::{
     wireguard::WireGuard,
 };
 
+#[macro_export]
 macro_rules! cmd {
     ($cmd:expr) => {
         $crate::shell::ShellCommand::new($cmd).execute()
@@ -114,16 +120,7 @@ pub fn create(device: DeviceConfig) -> eyre::Result<WireGuardConfig<plt::Tun, pl
 
     cfg.set_private_key(Some(device.secret_key()?));
 
-    if let Err(error) = cmd!(
-        "ipconfig",
-        "set",
-        tun_name,
-        "MANUAL",
-        device.address.ip().to_string(),
-        device.address.mask().to_string()
-    ) {
-        tracing::error!(?error, "failed to set ip address");
-    }
+    os::assign_ip(tun_name, device.address)?;
 
     Ok(cfg)
 }
