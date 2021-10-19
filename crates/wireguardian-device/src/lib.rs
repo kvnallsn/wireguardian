@@ -284,6 +284,16 @@ impl Peer {
         self
     }
 
+    /// Allows a set of IPv4 networks (ip + subnet mask) to route over the tunnel
+    ///
+    /// # Arguments
+    /// * `networks` - Networks to route over the tunnel
+    pub fn allow_ips(mut self, networks: Vec<Ipv4Network>) -> Self {
+        let mut networks = networks;
+        self.allowed_ips.append(&mut networks);
+        self
+    }
+
     /// Sets the keepalive interval (in seconds) to ensure the connection stays open
     ///
     /// Used to assist in UDP hole-punching (and ensuring NAT devices don't close the connection)
