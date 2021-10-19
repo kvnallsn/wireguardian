@@ -7,7 +7,7 @@ mod cmd;
 mod userspace;
 
 use ipnetwork::Ipv4Network;
-use std::net::SocketAddr;
+use std::{convert::TryInto, net::SocketAddr};
 use wireguard_rs::configuration::{ConfigError, Configuration};
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -24,6 +24,12 @@ pub enum Error {
 
     #[error("failed to run command: {0}")]
     Shell(#[from] cmd::ShellCommandError),
+
+    #[error("failed to decode base64 data: {0}")]
+    Base64(#[from] base64::DecodeError),
+
+    #[error("public key must be exactly 32 bytes long")]
+    WrongKeySize,
 
     #[error("private key not set")]
     MissingPrivateKey,
@@ -242,6 +248,21 @@ impl Peer {
         }
     }
 
+    /// Attempts to parse a public key from a base64 string
+    ///
+    /// # Arguments
+    /// * `pub_key` - Base64 encoded string
+    ///
+    /// # Errors
+    /// * If the string isn't valid base64 data
+    /// * If the decoded value is not exactly 32 bytes long
+    pub fn from_base64(pub_key: String) -> Result<Self, Error> {
+        let pubkey: Vec<u8> = base64::decode(pub_key)?;
+        let pubkey: [u8; 32] = pubkey.try_into().map_err(|_| Error::WrongKeySize)?;
+        let pubkey: PublicKey = pubkey.into();
+        Ok(Self::new(pubkey))
+    }
+
     /// Sets the peer's endpoint
     ///
     /// Note: This is (usually) only set on the "client" side of the tunnel. The "server" side
@@ -278,7 +299,7 @@ impl Peer {
     ///
     /// # Arguments
     /// * `device` - Device to add peer to
-    pub fn add(self, device: &Device) -> Result<bool, Error> {
+    pub fn add(self, device: &Device) -> Result<(), Error> {
         match &device.ty {
             DeviceType::Userspace(dev) => {
                 dev.add_peer(&self.pub_key);
@@ -292,7 +313,7 @@ impl Peer {
             }
         }
 
-        Ok(false)
+        Ok(())
     }
 
     /// Removes this peer from the associated device

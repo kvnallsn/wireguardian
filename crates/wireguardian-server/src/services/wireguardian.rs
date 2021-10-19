@@ -2,19 +2,13 @@
 
 use crate::services::SessionService;
 use color_eyre::eyre;
-use std::convert::TryInto;
 use tonic::{Request, Response, Status};
-//use wireguard_rs::{
-//    configuration::{Configuration, WireGuardConfig},
-//    plt,
-//};
-use wireguardian_device::{Peer, Device};
+use wireguardian_device::{Device, Peer};
 use wireguardian_proto::{
     wireguardian_server::{Wireguardian, WireguardianServer},
     ConnectReply, ConnectRequest, DisconnectReply, DisconnectRequest, LoginReply, LoginRequest,
     LogoutReply, LogoutRequest,
 };
-use x25519_dalek::PublicKey;
 
 // TODO #3: Implement config file for wg device (to avoid requiring already created device)
 pub struct WireguardianService {
@@ -85,9 +79,7 @@ impl Wireguardian for WireguardianService {
             .await
             .map_err(|error| {
                 tracing::error!(?error, "failed to expire session");
-
-                // TODO change error type
-                Status::unauthenticated("user not logged out")
+                Status::internal("user not logged out")
             })?;
 
         let reply = LogoutReply { success: true };
@@ -107,21 +99,30 @@ impl Wireguardian for WireguardianService {
         })?;
 
         // 3. add peer information to wireguard endpoint
-        let client_pubkey: Vec<u8> = base64::decode(request.pubkey).unwrap();
-        let client_pubkey: [u8; 32] = client_pubkey.try_into().unwrap();
-        let client_pubkey: PublicKey = client_pubkey.into();
         let client_ip = session.ip();
 
-        Peer::new(client_pubkey).allow_ip(client_ip).add(&self.device).map_err(|error| {
-            tracing::error!(?error);
-            Status::unauthenticated("")
-        })?;
+        Peer::from_base64(request.pubkey)
+            .map_err(|error| {
+                tracing::error!(?error);
+                Status::invalid_argument("parsing base64 pubkey failed")
+            })?
+            .allow_ip(client_ip)
+            .add(&self.device)
+            .map_err(|error| {
+                tracing::error!(?error);
+                Status::internal("failed to add peer")
+            })?;
 
-        let allowed_ips = self.device.allowed_ips().into_iter().map(|network| network.to_string()).collect::<Vec<_>>();
+        let allowed_ips = self
+            .device
+            .allowed_ips()
+            .into_iter()
+            .map(|network| network.to_string())
+            .collect::<Vec<_>>();
 
         // 4. build response
         let reply = ConnectReply {
-            ip: session.ip().to_string(),
+            ip: client_ip.to_string(),
             pubkey: self.public_key.clone(),
             endpoint: self.device.endpoint().to_string(),
             allowed: allowed_ips,
@@ -143,11 +144,12 @@ impl Wireguardian for WireguardianService {
         })?;
 
         // 2. remove peer from wireguard endpoint
-        let client_pubkey: Vec<u8> = base64::decode(request.pubkey).unwrap();
-        let client_pubkey: [u8; 32] = client_pubkey.try_into().unwrap();
-        let client_pubkey: PublicKey = client_pubkey.into();
-
-        Peer::new(client_pubkey).remove(&self.device);
+        Peer::from_base64(request.pubkey)
+            .map_err(|error| {
+                tracing::error!(?error);
+                Status::invalid_argument("parsing base64 pubkey failed")
+            })?
+            .remove(&self.device);
 
         // 3. build response
         let reply = DisconnectReply { success: true };
