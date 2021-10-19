@@ -7,10 +7,11 @@ use std::path::Path;
 use tonic::transport::Server;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
+use wireguardian_device::Device;
 
 pub mod cli;
 pub mod config;
-pub mod device;
+//pub mod device;
 pub mod models {
     mod user;
     pub use user::User;
@@ -32,7 +33,7 @@ pub mod services {
     mod wireguardian;
     pub use wireguardian::WireguardianService;
 }
-pub mod shell;
+//pub mod shell;
 
 #[cfg(test)]
 mod tests;
@@ -94,7 +95,14 @@ async fn main() -> eyre::Result<()> {
             let cfg = config::WireguardianConfig::load(config)?;
 
             // 1. start wireguard device based on args
-            let wg = device::create(cfg.device)?;
+            let wg = Device::builder()
+                .private_key(cfg.device.secret_key()?)
+                .name(cfg.device.adapter_name)
+                .address(cfg.device.address)
+                .listen(cfg.device.listen_port)
+                .endpoint(cfg.device.external)
+                .allowed_ips(cfg.device.allowed_ips)
+                .build()?;
 
             // 2. start session & wireguardian grpc service
             tracing::info!(?cfg.dhcp, "starting session service");

@@ -4,10 +4,11 @@ use crate::services::SessionService;
 use color_eyre::eyre;
 use std::convert::TryInto;
 use tonic::{Request, Response, Status};
-use wireguard_rs::{
-    configuration::{Configuration, WireGuardConfig},
-    plt,
-};
+//use wireguard_rs::{
+//    configuration::{Configuration, WireGuardConfig},
+//    plt,
+//};
+use wireguardian_device::{Peer, Device};
 use wireguardian_proto::{
     wireguardian_server::{Wireguardian, WireguardianServer},
     ConnectReply, ConnectRequest, DisconnectReply, DisconnectRequest, LoginReply, LoginRequest,
@@ -18,7 +19,7 @@ use x25519_dalek::PublicKey;
 // TODO #3: Implement config file for wg device (to avoid requiring already created device)
 pub struct WireguardianService {
     /// WireGuard device controlled by this service
-    device: WireGuardConfig<plt::Tun, plt::UDP>,
+    device: Device,
 
     /// Base64-encoded public key assigned to device
     public_key: String,
@@ -35,17 +36,12 @@ impl WireguardianService {
     /// * `device` - WireGuard device controlled by this service
     /// * `sessions` - A session service to track user sessions
     pub fn server(
-        device: WireGuardConfig<plt::Tun, plt::UDP>,
+        device: Device,
         sessions: SessionService,
     ) -> eyre::Result<WireguardianServer<WireguardianService>> {
         // extract the public key from the wireguard device
-        let public_key = match device
-            .get_private_key()
-            .map(|key| base64::encode(x25519_dalek::PublicKey::from(&key).to_bytes()))
-        {
-            Some(key) => key,
-            None => eyre::bail!("private key not set"),
-        };
+        let public_key = device.public_key();
+        let public_key = base64::encode(public_key.to_bytes());
 
         Ok(WireguardianServer::new(WireguardianService {
             device,
@@ -116,20 +112,19 @@ impl Wireguardian for WireguardianService {
         let client_pubkey: PublicKey = client_pubkey.into();
         let client_ip = session.ip();
 
-        if !self.device.add_peer(&client_pubkey) {
-            // TODO handle error
-            // key already added
-        }
+        Peer::new(client_pubkey).allow_ip(client_ip).add(&self.device).map_err(|error| {
+            tracing::error!(?error);
+            Status::unauthenticated("")
+        })?;
 
-        self.device
-            .add_allowed_ip(&client_pubkey, client_ip.into(), 32);
+        let allowed_ips = self.device.allowed_ips().into_iter().map(|network| network.to_string()).collect::<Vec<_>>();
 
         // 4. build response
         let reply = ConnectReply {
             ip: session.ip().to_string(),
             pubkey: self.public_key.clone(),
-            endpoint: "127.0.0.1:5555".into(),
-            allowed: "".into(),
+            endpoint: self.device.endpoint().to_string(),
+            allowed: allowed_ips,
         };
 
         Ok(Response::new(reply))
@@ -152,7 +147,7 @@ impl Wireguardian for WireguardianService {
         let client_pubkey: [u8; 32] = client_pubkey.try_into().unwrap();
         let client_pubkey: PublicKey = client_pubkey.into();
 
-        self.device.remove_peer(&client_pubkey);
+        Peer::new(client_pubkey).remove(&self.device);
 
         // 3. build response
         let reply = DisconnectReply { success: true };

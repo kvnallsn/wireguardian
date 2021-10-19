@@ -35,8 +35,14 @@ pub struct DeviceConfig {
     /// Server's private key
     pub private_key: String,
 
+    /// IPv4 address / port that this WireGuard device is reachable on
+    pub external: SocketAddr,
+
     /// UDP port to listen on
     pub listen_port: u16,
+
+    /// Networks allowed to route over this device
+    pub allowed_ips: Vec<Ipv4Network>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]

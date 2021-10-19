@@ -54,7 +54,7 @@ message ConnectReply {
   string endpoint = 3;
 
   // list of allowed ips to route over traffic
-  string allowed = 4;
+  repeated string allowed = 4;
 }
 
 message DisconnectRequest {
