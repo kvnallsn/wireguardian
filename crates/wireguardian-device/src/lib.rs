@@ -286,6 +286,7 @@ impl Peer {
                     dev.add_allowed_ip(&self.pub_key, net.ip().into(), net.prefix() as u32);
                 }
             }
+            #[cfg(target_os = "linux")]
             DeviceType::LinuxKernel => {
                 unimplemented!("linux kernel device not supported (yet)");
             }
@@ -303,6 +304,7 @@ impl Peer {
             DeviceType::Userspace(dev) => {
                 dev.remove_peer(&self.pub_key);
             }
+            #[cfg(target_os = "linux")]
             DeviceType::LinuxKernel => {
                 unimplemented!("linux kernel device not supported (yet)");
             }
