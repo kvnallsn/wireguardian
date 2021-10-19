@@ -117,7 +117,7 @@ pub struct Peer {
     /// Time (in seconds) to send keepalive packets
     ///
     /// Useful if both ends are behind NAT-ing routings / hole-punching
-    keepalive: Option<u16>,
+    keepalive: Option<u64>,
 }
 
 impl Device {
@@ -300,7 +300,7 @@ impl Peer {
     ///
     /// # Arguments
     /// * `keepalive` - Interval (in seconds)
-    pub fn keepalive(mut self, keepalive: u16) -> Self {
+    pub fn keepalive(mut self, keepalive: u64) -> Self {
         self.keepalive = Some(keepalive);
         self
     }
@@ -314,7 +314,13 @@ impl Peer {
             DeviceType::Userspace(dev) => {
                 dev.add_peer(&self.pub_key);
                 for net in self.allowed_ips {
+                    tracing::info!("allowing {} over tunnel", net);
                     dev.add_allowed_ip(&self.pub_key, net.ip().into(), net.prefix() as u32);
+                }
+
+                if let Some(keepalive) = self.keepalive {
+                    tracing::info!("set keepalive to {} seconds", keepalive);
+                    dev.set_persistent_keepalive_interval(&self.pub_key, keepalive);
                 }
             }
             #[cfg(target_os = "linux")]
