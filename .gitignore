@@ -328,4 +328,4 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/vim,visualstudiocode,osx,macos,linux,windows,sublimetext,rust,database,vagrant,python
 
-*.toml
+**/wg.toml

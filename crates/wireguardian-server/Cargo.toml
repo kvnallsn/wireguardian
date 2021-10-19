@@ -1,0 +1,40 @@
+[package]
+name = "wireguardian-server"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+base32 = "0.4"
+base64 = "0.13"
+chrono = { version = "0.4", features = ["serde"] }
+clap = "3.0.0-beta.4"
+color-eyre = "0.5"
+dialoguer = "0.8"
+flume = "0.10"
+hmac = "0.11"
+hyper = "0.14"
+ipnetwork = "0.18"
+parking_lot = "0.11"
+prost = "0.8"
+qr2term = "0.2"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+sha-1 = "0.9"
+sqlx = { version = "0.5", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "uuid", "chrono", "offline"] }
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["macros", "signal", "rt-multi-thread"] }
+toml = "0.5"
+tonic = "0.5"
+tower = "0.4"
+tracing = "0.1"
+tracing-subscriber = "0.2"
+uuid = { version = "0.8", features = ["serde", "v4"] }
+wireguardian-device = { path = "../wireguardian-device" }
+wireguardian-proto = { path = "../wireguardian-proto" }
+x25519-dalek = "1.2"
+
+
+[build-dependencies]
+tonic-build = "0.5"
